@@ -1,15 +1,28 @@
 {
-  "version": 2,
   "functions": {
-    "api/app.py": {
+    "api/*.py": {
       "runtime": "python3.9",
       "maxDuration": 60
     }
   },
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/app.py" },
-    { "src": "/radio/(.*)", "dest": "/api/app.py" },
-    { "src": "/proxy/(.*)", "dest": "/api/app.py" },
-    { "src": "/(.*)", "dest": "/api/app.py" }
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/app.py"
+    },
+    {
+      "src": "/proxy/(.*)",
+      "dest": "/api/app.py"
+    },
+    {
+      "src": "/radio/(.*)",
+      "dest": "/api/app.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/app.py"
+    }
   ]
 }
+
+
