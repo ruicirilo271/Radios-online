@@ -1,184 +1,177 @@
-/* ==========================================================
-   RADIO SEARCH + PLAYER NEON — SCRIPT COMPLETO
-   Feito para Rui · Compatível com Vercel
-========================================================== */
+/* ============================================
+   Utilitários gerais (relógio)
+============================================ */
+function initClock() {
+  const clockEl = document.getElementById("clock");
+  if (!clockEl) return;
+  function tick() {
+    const now = new Date();
+    clockEl.textContent = now.toLocaleString("pt-PT");
+  }
+  tick();
+  setInterval(tick, 1000);
+}
 
-/* ==========================================================
+/* ============================================
    PÁGINA DE PESQUISA
-========================================================== */
+============================================ */
 function initSearchPage() {
   const input = document.getElementById("searchInput");
   const status = document.getElementById("searchStatus");
-  const resultsBox = document.getElementById("resultsBox");
+  const resultsContainer = document.getElementById("resultsContainer");
+  const resultsList = document.getElementById("resultsList");
 
-  const btnTop100 = document.getElementById("btnTop100");
-  const btnGenres = document.getElementById("btnGenres");
-  const btnCountries = document.getElementById("btnCountries");
+  if (!input) return;
 
-  if (!input) return; // Não está na página de pesquisa
-
-  /* -------------------------
-     Mostrar resultados
-  ------------------------- */
-  async function procurarRadios(q) {
-    status.textContent = "A procurar…";
-
-    const resp = await fetch(`/api/search_all?q=${encodeURIComponent(q)}`);
-    const data = await resp.json();
-    resultsBox.innerHTML = "";
-
-    if (!data.ok || data.radios.length === 0) {
-      status.textContent = "Nenhuma rádio encontrada";
-      return;
-    }
-
-    status.textContent = `${data.radios.length} resultados encontrados`;
-
-    data.radios.forEach(r => {
-      const div = document.createElement("div");
-      div.className = "result-item";
-      div.innerHTML = `
-        <strong>${r.name}</strong>
-        <span class="country">${r.country || ""}</span>
-        <button class="btn small" onclick="location.href='/radio/${r.id}'">▶ Ouvir</button>
-      `;
-      resultsBox.appendChild(div);
-    });
-  }
-
-  /* -------------------------
-     Pesquisa em tempo-real
-  ------------------------- */
-  input.addEventListener("input", () => {
+  async function fazerPesquisa() {
     const q = input.value.trim();
-    if (q.length < 2) {
-      resultsBox.innerHTML = "";
-      status.textContent = "";
+    if (!q) {
+      status.textContent = "Escreve o nome da rádio e carrega em Enter.";
+      resultsContainer.style.display = "none";
+      resultsList.innerHTML = "";
       return;
     }
-    procurarRadios(q);
-  });
 
-  /* -------------------------
-     TOP 100
-  ------------------------- */
-  btnTop100?.addEventListener("click", async () => {
-    status.textContent = "A carregar Top 100…";
-    const resp = await fetch("/api/top100");
-    const data = await resp.json();
-    resultsBox.innerHTML = "";
+    status.textContent = "A procurar rádios...";
+    resultsContainer.style.display = "block";
+    resultsList.innerHTML = "";
 
-    data.radios.forEach(r => {
-      const div = document.createElement("div");
-      div.className = "result-item";
-      div.innerHTML = `
-        <strong>${r.name}</strong>
-        <span class="country">${r.country}</span>
-        <button class="btn small" onclick="location.href='/radio/${r.id}'">▶ Ouvir</button>
-      `;
-      resultsBox.appendChild(div);
-    });
+    try {
+      const resp = await fetch(`/api/search_all?q=${encodeURIComponent(q)}`);
+      const data = await resp.json();
 
-    status.textContent = "Top 100 carregado.";
-  });
+      if (!data.ok || !data.radios || !data.radios.length) {
+        status.textContent = "Nenhuma rádio encontrada.";
+        resultsList.innerHTML = "<p style='text-align:left;'>Sem resultados.</p>";
+        return;
+      }
 
-  /* -------------------------
-     GÉNEROS
-  ------------------------- */
-  btnGenres?.addEventListener("click", async () => {
-    status.textContent = "A carregar géneros…";
-    const resp = await fetch("/api/genres");
-    const data = await resp.json();
-    resultsBox.innerHTML = "";
+      status.textContent = `Encontradas ${data.radios.length} rádios.`;
+      resultsList.innerHTML = "";
 
-    data.list.forEach(g => {
-      const div = document.createElement("div");
-      div.className = "result-item";
-      div.innerHTML = `
-        <strong>${g}</strong>
-        <button class="btn small" onclick="procurarRadios('${g}')">Pesquisar</button>
-      `;
-      resultsBox.appendChild(div);
-    });
-
-    status.textContent = "Géneros carregados.";
-  });
-
-  /* -------------------------
-     PAÍSES
-  ------------------------- */
-  btnCountries?.addEventListener("click", async () => {
-    status.textContent = "A carregar países…";
-    const resp = await fetch("/api/countries");
-    const data = await resp.json();
-    resultsBox.innerHTML = "";
-
-    data.list.forEach(c => {
-      const div = document.createElement("div");
-      div.className = "result-item";
-      div.innerHTML = `
-        <strong>${c}</strong>
-        <button class="btn small" onclick="procurarRadios('${c}')">Pesquisar</button>
-      `;
-      resultsBox.appendChild(div);
-    });
-
-    status.textContent = "Países carregados.";
-  });
-}
-
-/* ==========================================================
-   EQUALIZER CIRCULAR
-========================================================== */
-function iniciarEQ(audio, canvas, ctx, coverFrame) {
-  if (!audio) return;
-
-  let audioCtx = new AudioContext();
-  let analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
-
-  const source = audioCtx.createMediaElementSource(audio);
-  source.connect(analyser);
-  source.connect(audioCtx.destination);
-
-  let dataArray = new Uint8Array(analyser.frequencyBinCount);
-  let cx = canvas.width / 2;
-  let cy = canvas.height / 2;
-  let radius = canvas.width / 2 - 4;
-
-  function desenhar() {
-    requestAnimationFrame(desenhar);
-
-    analyser.getByteFrequencyData(dataArray);
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    for (let i = 0; i < dataArray.length; i++) {
-      let angle = (i / dataArray.length) * Math.PI * 2;
-
-      let barHeight = (dataArray[i] / 255) * 45 + 10;
-
-      let x1 = cx + Math.cos(angle) * radius;
-      let y1 = cy + Math.sin(angle) * radius;
-
-      let x2 = cx + Math.cos(angle) * (radius + barHeight);
-      let y2 = cy + Math.sin(angle) * (radius + barHeight);
-
-      ctx.strokeStyle = "#22D3EE";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
+      data.radios.forEach(st => {
+        const div = document.createElement("div");
+        div.className = "result-item";
+        div.innerHTML = `
+          <div>
+            <strong>${st.name}</strong>
+            <span class="country">${st.country || ""}</span>
+          </div>
+          <a href="/radio/${st.id}" class="btn small">▶ Ouvir</a>
+        `;
+        resultsList.appendChild(div);
+      });
+    } catch (err) {
+      console.error("Erro na pesquisa:", err);
+      status.textContent = "Erro ao pesquisar rádios.";
+      resultsList.innerHTML = "<p>Erro ao pesquisar.</p>";
     }
   }
 
-  desenhar();
+  input.addEventListener("keyup", (e) => {
+    if (e.key === "Enter") {
+      fazerPesquisa();
+    }
+  });
+
+  // Sugestões (Top100 / género / país)
+  window.loadTop100 = async function() {
+    const box = document.getElementById("top100List");
+    if (!box) return;
+    box.innerHTML = "<p>A carregar Top 100...</p>";
+    try {
+      const r = await fetch("/api/suggest/top100");
+      const data = await r.json();
+      box.innerHTML = "";
+      if (!data.ok || !data.radios) {
+        box.innerHTML = "<p>Não foi possível carregar Top 100.</p>";
+        return;
+      }
+      data.radios.forEach(st => {
+        const div = document.createElement("div");
+        div.className = "result-item";
+        div.innerHTML = `
+          <div>
+            <strong>${st.name}</strong>
+            <span class="country">${st.country || ""}</span>
+          </div>
+          <a href="/radio/${st.id}" class="btn small">▶ Ouvir</a>
+        `;
+        box.appendChild(div);
+      });
+    } catch (err) {
+      console.error("Erro Top100:", err);
+      box.innerHTML = "<p>Erro ao carregar Top 100.</p>";
+    }
+  };
+
+  window.loadGenre = async function(g) {
+    const box = document.getElementById("genreList");
+    if (!box) return;
+    box.innerHTML = `<p>A carregar ${g}...</p>`;
+    try {
+      const r = await fetch(`/api/suggest/genre?g=${encodeURIComponent(g)}`);
+      const data = await r.json();
+      box.innerHTML = "";
+      if (!data.ok || !data.radios) {
+        box.innerHTML = "<p>Sem resultados.</p>";
+        return;
+      }
+      data.radios.forEach(st => {
+        const div = document.createElement("div");
+        div.className = "result-item";
+        div.innerHTML = `
+          <div>
+            <strong>${st.name}</strong>
+            <span class="country">${st.country || ""}</span>
+          </div>
+          <a href="/radio/${st.id}" class="btn small">▶ Ouvir</a>
+        `;
+        box.appendChild(div);
+      });
+    } catch (err) {
+      console.error("Erro genre:", err);
+      box.innerHTML = "<p>Erro ao carregar género.</p>";
+    }
+  };
+
+  window.loadCountry = async function(c) {
+    const box = document.getElementById("countryList");
+    if (!box) return;
+    box.innerHTML = `<p>A carregar ${c}...</p>`;
+    try {
+      const r = await fetch(`/api/suggest/country?c=${encodeURIComponent(c)}`);
+      const data = await r.json();
+      box.innerHTML = "";
+      if (!data.ok || !data.radios) {
+        box.innerHTML = "<p>Sem resultados.</p>";
+        return;
+      }
+      data.radios.forEach(st => {
+        const div = document.createElement("div");
+        div.className = "result-item";
+        div.innerHTML = `
+          <div>
+            <strong>${st.name}</strong>
+            <span class="country">${st.country || ""}</span>
+          </div>
+          <a href="/radio/${st.id}" class="btn small">▶ Ouvir</a>
+        `;
+        box.appendChild(div);
+      });
+    } catch (err) {
+      console.error("Erro country:", err);
+      box.innerHTML = "<p>Erro ao carregar país.</p>";
+    }
+  };
+
+  // carrega Top100 logo à entrada
+  loadTop100();
 }
 
-/* ==========================================================
-   PLAYER
-========================================================== */
+/* ============================================
+   PÁGINA DO PLAYER
+============================================ */
 function initPlayerPage() {
   const audio = document.getElementById("audio");
   const coverImg = document.getElementById("coverImg");
@@ -193,142 +186,301 @@ function initPlayerPage() {
   const eqCanvas = document.getElementById("eqCanvas");
   const ctx = eqCanvas.getContext("2d");
 
-  if (!audio) return; // estamos na página de pesquisa
-
   let isPlaying = false;
-  let lastTime = 0;
+  let ultimoArtist = "";
+  let ultimoSong = "";
 
-  /* -------------------------
-     Função de Reconexão
-  ------------------------- */
-  function reconnect(reason = "") {
-    console.log("🔁 Reconectar stream:", reason);
-    statusText.textContent = "A reconectar…";
-
-    const pos = audio.currentTime;
-
-    audio.src = `/proxy/${RADIO_ID}?t=${Date.now()}`;
-    audio.load();
-    audio
-      .play()
-      .then(() => {
-        isPlaying = true;
-        statusText.textContent = "A reproduzir…";
-        coverFrame.classList.add("spin");
-        iniciarEQ(audio, eqCanvas, ctx, coverFrame);
-        audio.currentTime = pos;
-      })
-      .catch(err => console.log("Falhou:", err));
-  }
-
-  /* -------------------------
-     Botão Play
-  ------------------------- */
+  /* PLAYER */
   btnPlayPause.addEventListener("click", () => {
     if (!isPlaying) {
+      statusText.textContent = "A iniciar stream...";
       audio.src = `/proxy/${RADIO_ID}`;
       audio.load();
-      audio
-        .play()
-        .then(() => {
-          isPlaying = true;
-          btnPlayPause.textContent = "⏸ Pausar";
-          statusText.textContent = "A reproduzir…";
-          coverFrame.classList.add("spin");
-          iniciarEQ(audio, eqCanvas, ctx, coverFrame);
-        })
-        .catch(() => {
-          statusText.textContent = "Clique novamente para iniciar.";
-        });
+      audio.play().then(() => {
+        isPlaying = true;
+        btnPlayPause.textContent = "⏸ Pausar";
+        statusText.textContent = "A reproduzir...";
+        coverFrame.classList.add("spin");
+        iniciarEQ(audio, eqCanvas, ctx, coverFrame);
+      }).catch(err => {
+        console.log("⚠️ Som bloqueado:", err);
+        statusText.textContent = "Clique novamente para iniciar o áudio.";
+      });
     } else {
       audio.pause();
       isPlaying = false;
       btnPlayPause.textContent = "▶ Reproduzir";
+      statusText.textContent = "Pausado.";
       coverFrame.classList.remove("spin");
     }
   });
 
-  /* -------------------------
-     Eventos críticos → reconectar
-  ------------------------- */
-  ["error", "stalled", "abort", "waiting", "ended"].forEach(ev => {
-    audio.addEventListener(ev, () => reconnect("Evento: " + ev));
+  audio.addEventListener("pause", () => {
+    isPlaying = false;
+    btnPlayPause.textContent = "▶ Reproduzir";
+    coverFrame.classList.remove("spin");
   });
 
-  /* -------------------------
-     Heartbeat (20s)
-  ------------------------- */
-  setInterval(() => {
+  function tentarReconectar() {
     if (!isPlaying) return;
+    console.log("🔁 Tentativa de reconectar stream...");
+    audio.src = `/proxy/${RADIO_ID}`;
+    audio.load();
+    audio.play().catch(err => console.log("Erro ao reconectar:", err));
+  }
 
-    if (audio.currentTime === lastTime) {
-      reconnect("Heartbeat");
-    }
+  audio.addEventListener("error", tentarReconectar);
+  audio.addEventListener("stalled", tentarReconectar);
+  audio.addEventListener("ended", tentarReconectar);
 
-    lastTime = audio.currentTime;
-  }, 20000);
-
-  /* -------------------------
-     FailSafe 4 minutos
-  ------------------------- */
-  setInterval(() => {
-    if (isPlaying) reconnect("Failsafe 4m");
-  }, 240000);
-
-  /* -------------------------
-     NOW PLAYING
-  ------------------------- */
+  /* NOW PLAYING */
   async function atualizarMusica() {
     try {
       const resp = await fetch(`/api/nowplaying?station=${encodeURIComponent(RADIO_ID)}`);
       const data = await resp.json();
+      if (!data.ok) {
+        artistNow.textContent = "Desconhecido";
+        songNow.textContent = "Desconhecido";
+        return;
+      }
 
-      if (!data.ok) return;
+      const novoArtist = data.artist || "Desconhecido";
+      const novoSong = data.song || "Desconhecido";
 
-      artistNow.textContent = data.artist || "Desconhecido";
-      songNow.textContent = data.song || "Desconhecido";
+      if (novoArtist !== ultimoArtist || novoSong !== ultimoSong) {
+        const meta = document.querySelector(".track-meta");
+        meta.classList.remove("flash");
+        void meta.offsetWidth;
+        meta.classList.add("flash");
+        ultimoArtist = novoArtist;
+        ultimoSong = novoSong;
+      }
+
+      artistNow.textContent = novoArtist;
+      songNow.textContent = novoSong;
       timeNow.textContent = data.time || "";
 
-      carregarCapa(data.artist, data.song);
+      carregarCapa(novoArtist, novoSong);
       carregarHistorico();
     } catch (err) {
-      console.error(err);
+      console.error("Erro /api/nowplaying:", err);
     }
   }
 
-  /* -------------------------
-     CAPA
-  ------------------------- */
-  async function carregarCapa(artist, song) {
-    const resp = await fetch(`/api/cover?artist=${encodeURIComponent(artist)}&song=${encodeURIComponent(song)}`);
-    const data = await resp.json();
-    coverImg.src = data.cover || "/static/default_cover.png";
-  }
-
-  /* -------------------------
-     HISTÓRICO
-  ------------------------- */
-  async function carregarHistorico() {
-    const resp = await fetch(`/api/history?station=${RADIO_ID}`);
-    const data = await resp.json();
-
-    historyList.innerHTML = "";
-    data.tracks.forEach(t => {
-      const li = document.createElement("li");
-      li.textContent = `${t.time} — ${t.artist} - ${t.song}`;
-      historyList.appendChild(li);
-    });
-  }
-
   btnReload.addEventListener("click", atualizarMusica);
+
+  /* CAPAS + CACHE */
+  async function carregarCapa(artist, song) {
+    const a = (artist || "").trim();
+    const s = (song || "").trim();
+
+    if (!a || !s || (a.toLowerCase() === "desconhecido" && s.toLowerCase() === "desconhecido")) {
+      coverImg.src = "/static/default_cover.png";
+      return;
+    }
+
+    const key = `cover_${a}__${s}`;
+    const cache = localStorage.getItem(key);
+    if (cache) {
+      coverImg.src = cache;
+      return;
+    }
+
+    try {
+      const resp = await fetch(`/api/cover?artist=${encodeURIComponent(a)}&song=${encodeURIComponent(s)}`);
+      const data = await resp.json();
+      const url = data.cover || "/static/default_cover.png";
+      coverImg.src = url;
+      if (data.cover) localStorage.setItem(key, url);
+    } catch (err) {
+      console.error("Erro a carregar capa:", err);
+      coverImg.src = "/static/default_cover.png";
+    }
+  }
+
+  /* HISTÓRICO */
+  async function carregarHistorico() {
+    try {
+      const resp = await fetch(`/api/history?station=${encodeURIComponent(RADIO_ID)}`);
+      const data = await resp.json();
+      historyList.innerHTML = "";
+
+      if (!data.tracks || !data.tracks.length) {
+        const li = document.createElement("li");
+        li.textContent = "Sem histórico ainda.";
+        historyList.appendChild(li);
+        return;
+      }
+
+      data.tracks.forEach(t => {
+        const li = document.createElement("li");
+        li.textContent = `${t.time} — ${t.artist} - ${t.song}`;
+        historyList.appendChild(li);
+      });
+    } catch (err) {
+      console.error("Erro histórico:", err);
+    }
+  }
+
+  /* AUTO ATUALIZAR MÚSICA */
   setInterval(atualizarMusica, 12000);
   atualizarMusica();
 }
 
-/* ==========================================================
-   AUTO-INIT
-========================================================== */
+/* ============================================
+   EQ CIRCULAR — SPACE NEON
+============================================ */
+let audioCtx = null;
+let analyser = null;
+let dataArray = null;
+let bufferLength = 0;
+let eqAnimId = null;
+const particles = [];
+
+function iniciarEQ(audio, eqCanvas, ctx, coverFrame) {
+  if (audioCtx) {
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return;
+  }
+
+  const ACtx = window.AudioContext || window.webkitAudioContext;
+  if (!ACtx) {
+    console.warn("Web Audio API não disponível.");
+    return;
+  }
+
+  audioCtx = new ACtx();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  bufferLength = analyser.frequencyBinCount;
+  dataArray = new Uint8Array(bufferLength);
+
+  const source = audioCtx.createMediaElementSource(audio);
+  source.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  desenharEQCircular(eqCanvas, ctx, coverFrame);
+}
+
+function desenharEQCircular(eqCanvas, ctx, coverFrame) {
+  eqAnimId = requestAnimationFrame(() => desenharEQCircular(eqCanvas, ctx, coverFrame));
+  if (!analyser || !dataArray) return;
+
+  analyser.getByteFrequencyData(dataArray);
+
+  const w = eqCanvas.width;
+  const h = eqCanvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+
+  ctx.clearRect(0, 0, w, h);
+
+  const innerRadius = 90;
+  const maxBarLen = 42;
+  const bars = bufferLength;
+  const now = performance.now() / 1000;
+
+  // energia de graves
+  let bassSum = 0;
+  const bassBins = Math.min(40, bufferLength);
+  for (let i = 0; i < bassBins; i++) {
+    bassSum += dataArray[i] || 0;
+  }
+  const bassLevel = (bassSum / bassBins) / 255;
+  const glowIntensity = 0.4 + bassLevel * 1.2;
+  coverFrame.style.boxShadow =
+    `0 0 ${25 + bassLevel * 40}px rgba(56,189,248,${glowIntensity})`;
+
+  const baseHue = 200 + Math.sin(now * 0.3) * 40;
+
+  for (let i = 0; i < bars; i++) {
+    const raw = dataArray[i] || 0;
+    const value = raw / 255;
+    const barLen = 8 + value * maxBarLen;
+    const angle = (i / bars) * Math.PI * 2;
+
+    const r0 = innerRadius;
+    const r1 = innerRadius + barLen;
+
+    const x0 = cx + r0 * Math.cos(angle);
+    const y0 = cy + r0 * Math.sin(angle);
+    const x1 = cx + r1 * Math.cos(angle);
+    const y1 = cy + r1 * Math.sin(angle);
+
+    const hueShift = Math.sin(angle * 2 + now * 0.6) * 30;
+    const hue = (baseHue + hueShift + 360) % 360;
+    const sat = 85;
+    const lightStart = 35;
+    const lightEnd = 70;
+
+    const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+    grad.addColorStop(0, `hsla(${hue}, ${sat}%, ${lightStart}%, 0.15)`);
+    grad.addColorStop(1, `hsla(${hue}, ${sat}%, ${lightEnd}%, 1)`);
+
+    ctx.lineWidth = 2.3;
+    ctx.strokeStyle = grad;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = `hsla(${hue}, ${sat}%, ${lightEnd}%, 0.8)`;
+
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+
+    const offset = 4;
+    const x0b = cx + (r0 + offset) * Math.cos(angle);
+    const y0b = cy + (r0 + offset) * Math.sin(angle);
+    const x1b = cx + (r1 + offset) * Math.cos(angle);
+    const y1b = cy + (r1 + offset) * Math.sin(angle);
+
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(x0b, y0b);
+    ctx.lineTo(x1b, y1b);
+    ctx.stroke();
+
+    if (value > 0.65 && Math.random() < value * 0.35) {
+      particles.push({
+        angle,
+        radius: innerRadius + barLen + 6,
+        alpha: 0.9,
+        speed: 18 + value * 35
+      });
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.radius += p.speed * 0.016;
+    p.alpha -= 0.02;
+
+    if (p.alpha <= 0) {
+      particles.splice(i, 1);
+      continue;
+    }
+
+    const px = cx + p.radius * Math.cos(p.angle);
+    const py = cy + p.radius * Math.sin(p.angle);
+
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(191, 219, 254, ${p.alpha})`;
+    ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.shadowBlur = 0;
+}
+
+/* ============================================
+   INIT GERAL
+============================================ */
 document.addEventListener("DOMContentLoaded", () => {
-  initSearchPage();
-  initPlayerPage();
+  initClock();
+
+  if (document.getElementById("searchInput")) {
+    initSearchPage();
+  }
+  if (document.getElementById("audio")) {
+    initPlayerPage();
+  }
 });
