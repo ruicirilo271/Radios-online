@@ -2,109 +2,78 @@
 <html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <title>Pesquisar Rádio — Neon</title>
+  <title>🌌 Neon Rádio – Pesquisa</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="bg-grid"></div>
 
-  <div class="search-container">
-    <h1 class="search-title">🔎 Procurar Rádio</h1>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-circle">📻</span>
+      <div>
+        <h1>Neon Rádio Online</h1>
+        <p>Pesquisa global · Top 100 · Géneros · Países</p>
+      </div>
+    </div>
+    <div class="top-right">
+      <span id="clock"></span>
+    </div>
+  </header>
+
+  <main class="search-container">
+    <h2 class="search-title">Procura uma rádio</h2>
 
     <input
-      type="text"
       id="searchInput"
       class="search-input"
-      placeholder="Ex: M80, M80 Ballads, Cidade, RFM..."
+      type="text"
+      placeholder="Ex.: M80, Cidade FM, Antena 1, Radio Nova..."
     >
-    <button id="searchBtn" class="btn primary big">Pesquisar</button>
 
-    <p id="searchStatus" class="search-status"></p>
+    <div class="search-status" id="searchStatus">
+      Escreve o nome da rádio e carrega em Enter.
+    </div>
 
-    <div id="resultsContainer" class="results-container"></div>
-  </div>
+    <div id="resultsContainer" class="results-container" style="margin-top:20px; display:none;">
+      <h2 style="margin-bottom:12px;">🔎 Resultados da pesquisa</h2>
+      <div id="resultsList" class="suggest-list"></div>
+    </div>
 
-  <script>
-    const searchInput = document.getElementById("searchInput");
-    const searchBtn = document.getElementById("searchBtn");
-    const searchStatus = document.getElementById("searchStatus");
-    const resultsContainer = document.getElementById("resultsContainer");
+    <div class="results-container" id="suggestions">
+      <h2 style="margin-bottom:15px;">📡 Rádios em Destaque</h2>
 
-    function renderResults(radios) {
-      resultsContainer.innerHTML = "";
+      <h3 class="subcat">🌍 Top 100 do Mundo</h3>
+      <div id="top100List" class="suggest-list"></div>
 
-      if (!radios.length) {
-        resultsContainer.innerHTML = "<p class='no-results'>Nenhuma rádio encontrada.</p>";
-        return;
-      }
+      <h3 class="subcat">🎧 Por Género</h3>
+      <div class="genre-btns">
+        <button type="button" onclick="loadGenre('pop')">Pop</button>
+        <button type="button" onclick="loadGenre('rock')">Rock</button>
+        <button type="button" onclick="loadGenre('dance')">Dance</button>
+        <button type="button" onclick="loadGenre('news')">News</button>
+        <button type="button" onclick="loadGenre('jazz')">Jazz</button>
+        <button type="button" onclick="loadGenre('classical')">Classical</button>
+      </div>
+      <div id="genreList" class="suggest-list"></div>
 
-      radios.forEach(r => {
-        const div = document.createElement("div");
-        div.className = "result-item";
+      <h3 class="subcat">🇵🇹 Países</h3>
+      <div class="country-btns">
+        <button type="button" onclick="loadCountry('Portugal')">Portugal</button>
+        <button type="button" onclick="loadCountry('Brazil')">Brasil</button>
+        <button type="button" onclick="loadCountry('United States')">EUA</button>
+        <button type="button" onclick="loadCountry('United Kingdom')">Reino Unido</button>
+        <button type="button" onclick="loadCountry('Spain')">Espanha</button>
+      </div>
+      <div id="countryList" class="suggest-list"></div>
+    </div>
+  </main>
 
-        div.innerHTML = `
-          <div>
-            <strong>${r.name}</strong>
-            <span class="country">(${r.country || "Desconhecido"})</span>
-          </div>
-          <button class="btn small" onclick="window.location.href='/radio/${r.id}'">Ouvir</button>
-        `;
+  <footer class="footer">
+    <span>Neon Rádio Online · Feito pelo Rui 💙</span>
+  </footer>
 
-        resultsContainer.appendChild(div);
-      });
-    }
-
-    async function pesquisar() {
-      const q = searchInput.value.trim();
-      if (!q) {
-        searchStatus.textContent = "Digite algo para pesquisar.";
-        return;
-      }
-
-      searchStatus.textContent = "A procurar...";
-      resultsContainer.innerHTML = "";
-
-      // se for M80 Ballads, podemos usar rota single também
-      // (mas mantemos tudo via search_all para mostrar lista quando não for baladas)
-      try {
-        const resp = await fetch(`/api/search_all?q=${encodeURIComponent(q)}`);
-        const data = await resp.json();
-
-        if (!data.ok || !data.radios.length) {
-          // fallback: se for m80 ballads, usa alias directo
-          if (q.toLowerCase().includes("ballads")) {
-            searchStatus.textContent = "Rádio especial (alias local): M80 Ballads.";
-            resultsContainer.innerHTML = `
-              <div class="result-item">
-                <div>
-                  <strong>M80 Ballads</strong>
-                  <span class="country">(Portugal)</span>
-                </div>
-                <button class="btn small" onclick="window.location.href='/radio/m80ballads_alias'">Ouvir</button>
-              </div>
-            `;
-            return;
-          }
-
-          searchStatus.textContent = "Nenhuma rádio encontrada.";
-          return;
-        }
-
-        searchStatus.textContent = `${data.radios.length} rádio(s) encontrada(s):`;
-        renderResults(data.radios);
-
-      } catch (err) {
-        console.error(err);
-        searchStatus.textContent = "Erro na pesquisa.";
-      }
-    }
-
-    searchBtn.addEventListener("click", pesquisar);
-    searchInput.addEventListener("keydown", e => {
-      if (e.key === "Enter") pesquisar();
-    });
-  </script>
+  <script src="/static/script.js"></script>
 </body>
 </html>
-
