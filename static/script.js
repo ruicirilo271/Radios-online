@@ -187,85 +187,97 @@ function initPlayerPage() {
   const ctx = eqCanvas.getContext("2d");
 
   let isPlaying = false;
-  let ultimoArtist = "";
-  let ultimoSong = "";
+  let lastTime = 0;
 
-  /* PLAYER */
+  /* ========= RECONNECTOR GLOBAL ========= */
+  function reconnect(reason = "") {
+    console.log("🔁 Reconectar stream…", reason);
+    statusText.textContent = "A reconectar…";
+
+    const pos = audio.currentTime;
+
+    audio.src = `/proxy/${RADIO_ID}?t=${Date.now()}`;
+    audio.load();
+
+    audio.play().then(() => {
+      statusText.textContent = "A reproduzir…";
+      isPlaying = true;
+      coverFrame.classList.add("spin");
+      iniciarEQ(audio, eqCanvas, ctx, coverFrame);
+      audio.currentTime = pos;
+    }).catch(err => {
+      console.log("⚠️ Falhou reconexão:", err);
+    });
+  }
+
+  /* ========= BOTÃO PLAY ========= */
   btnPlayPause.addEventListener("click", () => {
     if (!isPlaying) {
-      statusText.textContent = "A iniciar stream...";
       audio.src = `/proxy/${RADIO_ID}`;
       audio.load();
       audio.play().then(() => {
         isPlaying = true;
         btnPlayPause.textContent = "⏸ Pausar";
-        statusText.textContent = "A reproduzir...";
+        statusText.textContent = "A reproduzir…";
         coverFrame.classList.add("spin");
         iniciarEQ(audio, eqCanvas, ctx, coverFrame);
       }).catch(err => {
-        console.log("⚠️ Som bloqueado:", err);
-        statusText.textContent = "Clique novamente para iniciar o áudio.";
+        statusText.textContent = "Clique novamente para iniciar.";
       });
     } else {
       audio.pause();
       isPlaying = false;
       btnPlayPause.textContent = "▶ Reproduzir";
-      statusText.textContent = "Pausado.";
       coverFrame.classList.remove("spin");
     }
   });
 
-  audio.addEventListener("pause", () => {
-    isPlaying = false;
-    btnPlayPause.textContent = "▶ Reproduzir";
-    coverFrame.classList.remove("spin");
+  /* ========= EVENTOS QUE PARAM A RADIO ========= */
+  ["error", "stalled", "abort", "waiting", "ended"].forEach(ev => {
+    audio.addEventListener(ev, () => reconnect("Evento: " + ev));
   });
 
-  function tentarReconectar() {
+  /* ========= HEARTBEAT (deteta freeze) ========= */
+  setInterval(() => {
     if (!isPlaying) return;
-    console.log("🔁 Tentativa de reconectar stream...");
-    audio.src = `/proxy/${RADIO_ID}`;
-    audio.load();
-    audio.play().catch(err => console.log("Erro ao reconectar:", err));
-  }
 
-  audio.addEventListener("error", tentarReconectar);
-  audio.addEventListener("stalled", tentarReconectar);
-  audio.addEventListener("ended", tentarReconectar);
+    if (audio.currentTime === lastTime) {
+      reconnect("Heartbeat freeze");
+    }
 
-  /* NOW PLAYING */
+    lastTime = audio.currentTime;
+  }, 20000); // 20s
+
+  /* ========= FAILSAFE AUTO-RELOAD A CADA 4 MIN ========= */
+  setInterval(() => {
+    if (isPlaying) {
+      reconnect("Failsafe 4 minutos");
+    }
+  }, 240000);
+
+  /* ========= NOW PLAYING ========= */
   async function atualizarMusica() {
     try {
       const resp = await fetch(`/api/nowplaying?station=${encodeURIComponent(RADIO_ID)}`);
       const data = await resp.json();
-      if (!data.ok) {
-        artistNow.textContent = "Desconhecido";
-        songNow.textContent = "Desconhecido";
-        return;
-      }
 
-      const novoArtist = data.artist || "Desconhecido";
-      const novoSong = data.song || "Desconhecido";
+      if (!data.ok) return;
 
-      if (novoArtist !== ultimoArtist || novoSong !== ultimoSong) {
-        const meta = document.querySelector(".track-meta");
-        meta.classList.remove("flash");
-        void meta.offsetWidth;
-        meta.classList.add("flash");
-        ultimoArtist = novoArtist;
-        ultimoSong = novoSong;
-      }
-
-      artistNow.textContent = novoArtist;
-      songNow.textContent = novoSong;
+      artistNow.textContent = data.artist || "Desconhecido";
+      songNow.textContent = data.song || "Desconhecido";
       timeNow.textContent = data.time || "";
 
-      carregarCapa(novoArtist, novoSong);
+      carregarCapa(data.artist, data.song);
       carregarHistorico();
     } catch (err) {
-      console.error("Erro /api/nowplaying:", err);
+      console.error("Erro atualização nowplaying:", err);
     }
   }
+
+  setInterval(atualizarMusica, 12000);
+  atualizarMusica();
+}
+
 
   btnReload.addEventListener("click", atualizarMusica);
 
