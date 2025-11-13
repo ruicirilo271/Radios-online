@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <title>Pesquisar Rádio — Neon</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <div class="search-container">
+    <h1 class="search-title">🔎 Procurar Rádio</h1>
+
+    <input
+      type="text"
+      id="searchInput"
+      class="search-input"
+      placeholder="Ex: M80, M80 Ballads, Cidade, RFM..."
+    >
+    <button id="searchBtn" class="btn primary big">Pesquisar</button>
+
+    <p id="searchStatus" class="search-status"></p>
+
+    <div id="resultsContainer" class="results-container"></div>
+  </div>
+
+  <script>
+    const searchInput = document.getElementById("searchInput");
+    const searchBtn = document.getElementById("searchBtn");
+    const searchStatus = document.getElementById("searchStatus");
+    const resultsContainer = document.getElementById("resultsContainer");
+
+    function renderResults(radios) {
+      resultsContainer.innerHTML = "";
+
+      if (!radios.length) {
+        resultsContainer.innerHTML = "<p class='no-results'>Nenhuma rádio encontrada.</p>";
+        return;
+      }
+
+      radios.forEach(r => {
+        const div = document.createElement("div");
+        div.className = "result-item";
+
+        div.innerHTML = `
+          <div>
+            <strong>${r.name}</strong>
+            <span class="country">(${r.country || "Desconhecido"})</span>
+          </div>
+          <button class="btn small" onclick="window.location.href='/radio/${r.id}'">Ouvir</button>
+        `;
+
+        resultsContainer.appendChild(div);
+      });
+    }
+
+    async function pesquisar() {
+      const q = searchInput.value.trim();
+      if (!q) {
+        searchStatus.textContent = "Digite algo para pesquisar.";
+        return;
+      }
+
+      searchStatus.textContent = "A procurar...";
+      resultsContainer.innerHTML = "";
+
+      // se for M80 Ballads, podemos usar rota single também
+      // (mas mantemos tudo via search_all para mostrar lista quando não for baladas)
+      try {
+        const resp = await fetch(`/api/search_all?q=${encodeURIComponent(q)}`);
+        const data = await resp.json();
+
+        if (!data.ok || !data.radios.length) {
+          // fallback: se for m80 ballads, usa alias directo
+          if (q.toLowerCase().includes("ballads")) {
+            searchStatus.textContent = "Rádio especial (alias local): M80 Ballads.";
+            resultsContainer.innerHTML = `
+              <div class="result-item">
+                <div>
+                  <strong>M80 Ballads</strong>
+                  <span class="country">(Portugal)</span>
+                </div>
+                <button class="btn small" onclick="window.location.href='/radio/m80ballads_alias'">Ouvir</button>
+              </div>
+            `;
+            return;
+          }
+
+          searchStatus.textContent = "Nenhuma rádio encontrada.";
+          return;
+        }
+
+        searchStatus.textContent = `${data.radios.length} rádio(s) encontrada(s):`;
+        renderResults(data.radios);
+
+      } catch (err) {
+        console.error(err);
+        searchStatus.textContent = "Erro na pesquisa.";
+      }
+    }
+
+    searchBtn.addEventListener("click", pesquisar);
+    searchInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") pesquisar();
+    });
+  </script>
+</body>
+</html>
+

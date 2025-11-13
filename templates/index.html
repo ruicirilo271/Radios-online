@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ radio_name }} — Neon Radio Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-circle">🎵</span>
+      <div>
+        <h1>{{ radio_name }}</h1>
+        <p>Neon Now Playing &amp; Stream</p>
+      </div>
+    </div>
+    <div class="top-right">
+      <span id="clock"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel main-panel">
+      <div class="cover-wrapper">
+  <div class="cover-vinyl">
+    <canvas id="eqCanvas" width="260" height="260"></canvas>
+    <div id="coverFrame" class="cover-frame">
+      <img id="coverImg" src="/static/default_cover.png" alt="Capa do álbum">
+      <div class="cover-glow"></div>
+    </div>
+  </div>
+</div>
+
+
+      <div class="now-info">
+        <h2>Agora a tocar</h2>
+
+        <div class="track-meta">
+          <span id="artistNow" class="artist">—</span>
+          <span id="songNow" class="song">—</span>
+        </div>
+
+        <div class="meta-row">
+          <span class="badge live">● AO VIVO</span>
+          <span id="timeNow" class="small-text">—</span>
+        </div>
+
+        <div class="controls">
+          <button id="btnPlayPause" class="btn primary">▶ Reproduzir</button>
+          <button id="btnReload" class="btn ghost">⟳ Atualizar</button>
+        </div>
+
+        <audio id="audio" preload="none" crossorigin="anonymous"></audio>
+
+        <div class="status-bar">
+          <span id="statusText">Pronto.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel side-panel">
+      <h2>Últimas músicas</h2>
+      <ul id="historyList" class="history-list"></ul>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>{{ radio_name }} · Neon Radio Player · Feito pelo Rui 💙</span>
+  </footer>
+
+  <script>
+    const RADIO_ID = "{{ radio_id }}";
+    const RADIO_NAME = "{{ radio_name }}";
+  </script>
+  <script src="/static/script.js"></script>
+</body>
+</html>
+
+

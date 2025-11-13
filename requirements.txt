@@ -1,0 +1,6 @@
+flask
+requests
+shazamio
+aiohttp
+python-dotenv
+gunicorn
