@@ -323,9 +323,18 @@ def identificar_shazam(path: str):
 # ───────────────────────────── HISTÓRICO ─────────────────────────────
 
 def add_to_history(station_id: str, artist: str, song: str):
-    """Adiciona ao histórico com filtros anti-duplicados/invertidos."""
+    """
+    Adiciona ao histórico garantindo SEMPRE:
+      - Formato final = ARTISTA, MÚSICA
+      - Nunca duplica (nem normal, nem invertido)
+      - Nunca guarda 'música - artista' invertido
+    """
+
     if not artist or not song:
         return
+
+    # normalizar (ARTISTA, MÚSICA)
+    artist, song = normalize_artist_song(artist, song)
 
     a = artist.strip()
     s = song.strip()
@@ -334,26 +343,29 @@ def add_to_history(station_id: str, artist: str, song: str):
         return
 
     hist = HISTORY[station_id]
+
     if hist:
         last = hist[0]
         la = last["artist"].strip()
         ls = last["song"].strip()
 
-        # Igual exatamente?
+        # Já existe exatamente igual
         if la.lower() == a.lower() and ls.lower() == s.lower():
             return
 
-        # Igual mas trocado? (ex.: "A - B" e depois "B - A")
+        # Caso invertido — ignorar sempre
         if la.lower() == s.lower() and ls.lower() == a.lower():
-            print("♻️ Ignorar swap duplicado no histórico:", a, "-", s)
+            print("♻️ Histórico: ignorado (entrada invertida detectada)", a, "-", s)
             return
 
+    # Inserir garantidamente no formato correto ARTISTA - MÚSICA
     hist.appendleft({
         "artist": a,
         "song": s,
         "time": datetime.now().strftime("%H:%M:%S")
     })
-    print("📝 Histórico +1:", a, "-", s, "para", station_id)
+    print("📝 Histórico salvo:", a, "-", s)
+
 
 
 # ───────────────────────────── PROXY STREAM ─────────────────────────────
