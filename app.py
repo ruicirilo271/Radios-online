@@ -4,7 +4,7 @@ import uuid
 import asyncio
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict, deque
 
 import requests
@@ -18,11 +18,20 @@ app = Flask(__name__)
 
 USER_AGENT = "RuiRadioNeon/1.0"
 
-# cache de rádios (uuid -> info)
+# Cache de rádios (uuid -> info)
 STATIONS = {}
 
-# histórico por rádio
+# Histórico por rádio (últimas 50)
 HISTORY = defaultdict(lambda: deque(maxlen=50))
+
+# Cache de capas iTunes: (artist_lower, song_lower) -> url ou None
+COVER_CACHE = {}
+
+# Cache simples de Shazam: station_id -> {"artist": ..., "song": ..., "time": datetime}
+SHAZAM_LAST_RESULT = {}
+
+# Cooldown para chamadas ao Shazam por rádio (segundos)
+SHAZAM_COOLDOWN = 60
 
 
 # ───────────────────────────── RADIOBROWSER ─────────────────────────────
@@ -39,6 +48,7 @@ def fetch_station_by_name(query: str):
             "id": "m80ballads_alias",
             "name": "M80 Ballads",
             "stream": "https://stream-icy.bauermedia.pt/m80ballads.aac",
+            "country": "Portugal",
         }
         STATIONS[info["id"]] = info
         return info
@@ -71,7 +81,7 @@ def fetch_station_by_id(station_id: str):
     if not station_id:
         return None
 
-    # alias
+    # Alias local M80 Ballads
     if station_id == "m80ballads_alias":
         info = {
             "id": "m80ballads_alias",
@@ -111,6 +121,14 @@ def fetch_station_by_id(station_id: str):
 def get_itunes_cover(artist: str, song: str):
     if not artist or not song:
         return None
+
+    a = artist.strip().lower()
+    s = song.strip().lower()
+    key = (a, s)
+
+    if key in COVER_CACHE:
+        return COVER_CACHE[key]
+
     try:
         url = "https://itunes.apple.com/search"
         params = {"term": f"{artist} {song}", "entity": "song", "limit": 1}
@@ -118,14 +136,62 @@ def get_itunes_cover(artist: str, song: str):
         r.raise_for_status()
         results = r.json().get("results", [])
         if not results:
+            COVER_CACHE[key] = None
             return None
         art = results[0].get("artworkUrl100")
         if not art:
+            COVER_CACHE[key] = None
             return None
-        return art.replace("100x100bb", "600x600bb")
+        big = art.replace("100x100bb", "600x600bb")
+        COVER_CACHE[key] = big
+        return big
     except Exception as e:
         print("[ERRO ITUNES]", e)
+        COVER_CACHE[key] = None
         return None
+
+
+# ───────────────────────────── NORMALIZAÇÃO ARTISTA/MÚSICA ─────────────────────────────
+
+def normalize_artist_song(artist: str, song: str):
+    """
+    Tenta garantir que devolvemos sempre (ARTISTA, MÚSICA).
+
+    Algumas rádios mandam "Title - Artist" em vez de "Artist - Title".
+    Aqui aplicamos regras simples para detetar e, se fizer sentido, trocar.
+    """
+    if not artist or not song:
+        return artist, song
+
+    a = artist.strip()
+    s = song.strip()
+
+    # Se forem iguais ou muito parecidos, não vale a pena mexer
+    if a.lower() == s.lower():
+        return a, s
+
+    # Contar palavras e tamanho
+    words_a = len(a.split())
+    words_s = len(s.split())
+    len_a = len(a)
+    len_s = len(s)
+
+    # Regra 1: a primeira parte é muito maior e a segunda muito curta (ex: "I Wanna Know" vs "Joe")
+    # → provável que seja (TÍTULO, ARTISTA) → trocar
+    if (words_a >= 3 and words_s <= 2) and (len_a > len_s + 5):
+        return s, a
+
+    # Regra 2: se a segunda parte tiver "feat", "&", "with", etc. é provável que seja ARTISTA → trocar
+    lower_s = s.lower()
+    if any(x in lower_s for x in [" feat", " ft.", " feat.", " & ", " with "]):
+        return s, a
+
+    # Regra 3: primeira parte é 1 palavra muito curta e a segunda é mais longa → primeira é ARTISTA, manter
+    if words_a == 1 and words_s >= 3:
+        return a, s
+
+    # Caso contrário, deixar como veio
+    return a, s
 
 
 # ───────────────────────────── ICY METADATA ─────────────────────────────
@@ -176,11 +242,14 @@ def get_icy_metadata(stream_url: str):
         song = None
 
         if " - " in title_part:
-            artist, song = title_part.split(" - ", 1)
-            artist = artist.strip()
-            song = song.strip()
+            first, second = title_part.split(" - ", 1)
+            first = first.strip()
+            second = second.strip()
+            artist, song = normalize_artist_song(first, second)
         else:
-            song = title_part.strip() or None
+            song = title_part.strip()
+            if not song:
+                return None, None, meta_str
 
         return artist, song, meta_str
 
@@ -254,15 +323,35 @@ def identificar_shazam(path: str):
 # ───────────────────────────── HISTÓRICO ─────────────────────────────
 
 def add_to_history(station_id: str, artist: str, song: str):
+    """
+    Adiciona ao histórico:
+    - Ignora vazios e 'Desconhecido/Desconhecido'
+    - Não adiciona se for igual ao último registo
+    - Não adiciona se for o MESMO par mas trocado (A-B vs B-A)
+    """
     if not artist or not song:
         return
+
     a = artist.strip()
     s = song.strip()
+
     if a.lower() == "desconhecido" and s.lower() == "desconhecido":
         return
+
     hist = HISTORY[station_id]
-    if hist and hist[0]["artist"] == a and hist[0]["song"] == s:
-        return
+    if hist:
+        last = hist[0]
+        la = last["artist"].strip()
+        ls = last["song"].strip()
+
+        # Igual exatamente?
+        if la.lower() == a.lower() and ls.lower() == s.lower():
+            return
+
+        # Igual mas trocado? (ex.: "A - B" e depois "B - A")
+        if la.lower() == s.lower() and ls.lower() == a.lower():
+            return
+
     hist.appendleft({
         "artist": a,
         "song": s,
@@ -404,15 +493,16 @@ def api_suggest_country():
     if not country:
         return jsonify({"ok": False, "radios": []})
     try:
-        url = f"https://de1.api.radio-browser.info/json/stations/bycountry/{country}"
-        r = requests.get(url, timeout=10, headers={"User-Agent": USER_AGENT})
+        url = "https://de1.api.radio-browser.info/json/stations/search"
+        payload = {"country": country, "limit": 50}
+        r = requests.post(url, json=payload, timeout=10, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
         data = r.json()
         radios = [{
             "id": st["stationuuid"],
             "name": st.get("name"),
-            "country": country,
-        } for st in data[:50]]
+            "country": st.get("country"),
+        } for st in data]
         return jsonify({"ok": True, "radios": radios})
     except Exception as e:
         print("[ERRO COUNTRY]", e)
@@ -438,19 +528,43 @@ def api_nowplaying():
     artist = icy_artist
     song = icy_song
 
-    # Se ICY for insuficiente → tentar Shazam
-    if not artist or not song or artist.lower() == "desconhecido" or song.lower() == "desconhecido":
-        print("⚠️ Metadata fraca, tentar Shazam…")
-        path = capturar_wav(stream_url, seconds=4)
-        if path:
-            a2, s2 = identificar_shazam(path)
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-            if a2 and s2:
-                artist, song = a2, s2
-                print("🎵 SHAZAM:", artist, "-", song)
+    # Se ICY for insuficiente → tentar Shazam com cooldown
+    if (
+        not artist
+        or not song
+        or artist.lower() == "desconhecido"
+        or song.lower() == "desconhecido"
+    ):
+        now = datetime.now()
+        use_cached = False
+
+        # Ver se temos resultado recente desta rádio
+        last = SHAZAM_LAST_RESULT.get(station_id)
+        if last:
+            if now - last["time"] < timedelta(seconds=SHAZAM_COOLDOWN):
+                # Usa resultado recente do Shazam
+                artist = last["artist"]
+                song = last["song"]
+                use_cached = True
+                print("♻️ Usar Shazam em cache:", artist, "-", song)
+
+        if not use_cached:
+            print("⚠️ Metadata fraca, a capturar áudio p/ Shazam…")
+            path = capturar_wav(stream_url, seconds=4)
+            if path:
+                a2, s2 = identificar_shazam(path)
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                if a2 and s2:
+                    artist, song = a2, s2
+                    print("🎵 SHAZAM:", artist, "-", song)
+                    SHAZAM_LAST_RESULT[station_id] = {
+                        "artist": artist,
+                        "song": song,
+                        "time": now,
+                    }
 
     artist = artist or "Desconhecido"
     song = song or "Desconhecido"
