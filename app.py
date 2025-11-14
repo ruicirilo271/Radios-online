@@ -21,28 +21,28 @@ USER_AGENT = "RuiRadioNeon/1.0"
 # Cache de rádios (uuid -> info)
 STATIONS = {}
 
-# Histórico por rádio (últimas 50)
+# Histórico por rádio (últimas 50 músicas)
 HISTORY = defaultdict(lambda: deque(maxlen=50))
 
-# Cache de capas iTunes: (artist_lower, song_lower) -> url ou None
+# Cache de capas iTunes: (artist, song) -> url
 COVER_CACHE = {}
 
-# Cache simples de Shazam: station_id -> {"artist": ..., "song": ..., "time": datetime}
+# Cache Shazam: resultados recentes por estação
 SHAZAM_LAST_RESULT = {}
 
-# Cooldown para chamadas ao Shazam por rádio (segundos)
+# Cooldown Shazam (segundos)
 SHAZAM_COOLDOWN = 60
 
 
-# ───────────────────────────── RADIOBROWSER ─────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# RADIOBROWSER – BUSCA POR NOME
+# ─────────────────────────────────────────────────────────────
 def fetch_station_by_name(query: str):
-    """Pesquisa rápida no RadioBrowser + alias local."""
     q = (query or "").strip().lower()
     if not q:
         return None
 
-    # Alias M80 Ballads (exemplo local)
+    # Alias local
     if "ballads" in q:
         info = {
             "id": "m80ballads_alias",
@@ -56,8 +56,9 @@ def fetch_station_by_name(query: str):
     try:
         url = "https://de1.api.radio-browser.info/json/stations/search"
         payload = {"name": q, "limit": 10}
-        r = requests.post(url, json=payload, timeout=8, headers={"User-Agent": USER_AGENT})
+        r = requests.post(url, json=payload, timeout=10, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
+
         data = r.json()
         if not data:
             return None
@@ -69,6 +70,7 @@ def fetch_station_by_name(query: str):
             "stream": st.get("url_resolved") or st.get("url"),
             "country": st.get("country"),
         }
+
         STATIONS[info["id"]] = info
         return info
     except Exception as e:
@@ -76,12 +78,14 @@ def fetch_station_by_name(query: str):
         return None
 
 
+# ─────────────────────────────────────────────────────────────
+# RADIOBROWSER – BUSCA POR UUID
+# ─────────────────────────────────────────────────────────────
 def fetch_station_by_id(station_id: str):
-    """Obtém info da rádio via cache ou RadioBrowser."""
     if not station_id:
         return None
 
-    # Alias local M80 Ballads
+    # alias
     if station_id == "m80ballads_alias":
         info = {
             "id": "m80ballads_alias",
@@ -97,11 +101,13 @@ def fetch_station_by_id(station_id: str):
 
     try:
         url = f"https://de1.api.radio-browser.info/json/stations/byuuid/{station_id}"
-        r = requests.get(url, timeout=8, headers={"User-Agent": USER_AGENT})
+        r = requests.get(url, timeout=10, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
+
         data = r.json()
         if not data:
             return None
+
         st = data[0]
         info = {
             "id": st["stationuuid"],
@@ -109,22 +115,23 @@ def fetch_station_by_id(station_id: str):
             "stream": st.get("url_resolved") or st.get("url"),
             "country": st.get("country"),
         }
+
         STATIONS[info["id"]] = info
         return info
+
     except Exception as e:
         print("[ERRO fetch_station_by_id]", e)
         return None
 
 
-# ───────────────────────────── CAPAS (iTunes) ─────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# CAPAS ITUNES
+# ─────────────────────────────────────────────────────────────
 def get_itunes_cover(artist: str, song: str):
     if not artist or not song:
         return None
 
-    a = artist.strip().lower()
-    s = song.strip().lower()
-    key = (a, s)
+    key = (artist.lower(), song.lower())
 
     if key in COVER_CACHE:
         return COVER_CACHE[key]
@@ -132,89 +139,69 @@ def get_itunes_cover(artist: str, song: str):
     try:
         url = "https://itunes.apple.com/search"
         params = {"term": f"{artist} {song}", "entity": "song", "limit": 1}
+
         r = requests.get(url, params=params, timeout=6)
         r.raise_for_status()
+
         results = r.json().get("results", [])
         if not results:
             COVER_CACHE[key] = None
             return None
+
         art = results[0].get("artworkUrl100")
         if not art:
             COVER_CACHE[key] = None
             return None
-        big = art.replace("100x100bb", "600x600bb")
-        COVER_CACHE[key] = big
-        return big
+
+        cover = art.replace("100x100bb", "600x600bb")
+        COVER_CACHE[key] = cover
+        return cover
+
     except Exception as e:
         print("[ERRO ITUNES]", e)
         COVER_CACHE[key] = None
         return None
 
 
-# ───────────────────────────── NORMALIZAÇÃO ARTISTA/MÚSICA ─────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# NORMALIZAR ARTISTA / MÚSICA
+# ─────────────────────────────────────────────────────────────
 def normalize_artist_song(artist: str, song: str):
-    """
-    Tenta garantir que devolvemos sempre (ARTISTA, MÚSICA).
-
-    Algumas rádios mandam "Title - Artist" em vez de "Artist - Title".
-    Aqui aplicamos regras simples para detetar e, se fizer sentido, trocar.
-    """
     if not artist or not song:
         return artist, song
 
     a = artist.strip()
     s = song.strip()
 
-    # Se forem iguais ou muito parecidos, não vale a pena mexer
+    # Se forem iguais, não mexe
     if a.lower() == s.lower():
         return a, s
 
-    # Contar palavras e tamanho
-    words_a = len(a.split())
-    words_s = len(s.split())
-    len_a = len(a)
-    len_s = len(s)
-
-    # Regra 1: a primeira parte é muito maior e a segunda muito curta (ex: "I Wanna Know" vs "Joe")
-    # → provável que seja (TÍTULO, ARTISTA) → trocar
-    if (words_a >= 3 and words_s <= 2) and (len_a > len_s + 5):
+    # Se a primeira é grande e a segunda pequena → inverter
+    if len(a.split()) >= 3 and len(s.split()) <= 2 and len(a) > len(s) + 5:
         return s, a
 
-    # Regra 2: se a segunda parte tiver "feat", "&", "with", etc. é provável que seja ARTISTA → trocar
-    lower_s = s.lower()
-    if any(x in lower_s for x in [" feat", " ft.", " feat.", " & ", " with "]):
+    # "feat", "&", etc → segunda parte é artista → inverter
+    if any(x in s.lower() for x in [" feat", " ft.", " with ", " & "]):
         return s, a
 
-    # Regra 3: primeira parte é 1 palavra muito curta e a segunda é mais longa → primeira é ARTISTA, manter
-    if words_a == 1 and words_s >= 3:
-        return a, s
-
-    # Caso contrário, deixar como veio
     return a, s
 
 
-# ───────────────────────────── ICY METADATA ─────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# ICY METADATA
+# ─────────────────────────────────────────────────────────────
 def get_icy_metadata(stream_url: str):
-    """
-    Lê metadata ICY. Se apanhar XML Bauer (RadioInfo) → devolve Desconhecido.
-    """
     try:
-        headers = {"Icy-MetaData": "1", "User-Agent": USER_AGENT}
-        r = requests.get(stream_url, headers=headers, stream=True, timeout=8)
+        h = {"Icy-MetaData": "1", "User-Agent": USER_AGENT}
+        r = requests.get(stream_url, headers=h, stream=True, timeout=8)
         r.raise_for_status()
 
-        metaint_header = r.headers.get("icy-metaint") or r.headers.get("Icy-MetaInt")
-        if not metaint_header:
+        metaint = r.headers.get("icy-metaint") or r.headers.get("Icy-MetaInt")
+        if not metaint:
             return None, None, None
+        metaint = int(metaint)
 
-        try:
-            metaint = int(metaint_header)
-        except ValueError:
-            return None, None, None
-
-        # Saltar áudio
         r.raw.read(metaint)
         size_byte = r.raw.read(1)
         if not size_byte:
@@ -224,74 +211,52 @@ def get_icy_metadata(stream_url: str):
         if meta_len == 0:
             return None, None, None
 
-        meta_bytes = r.raw.read(meta_len)
-        meta_str = meta_bytes.rstrip(b"\0").decode("utf-8", errors="ignore")
+        meta = r.raw.read(meta_len).rstrip(b"\0").decode("utf-8", errors="ignore")
 
-        # Se for XML RadioInfo (Bauer)
-        if meta_str.strip().startswith("<?xml") or "<RadioInfo>" in meta_str:
-            return "Desconhecido", "Desconhecido", meta_str
+        if meta.startswith("<?xml") or "<RadioInfo>" in meta:
+            return "Desconhecido", "Desconhecido", meta
 
-        title_part = meta_str
-        if "StreamTitle='" in meta_str:
-            try:
-                title_part = meta_str.split("StreamTitle='", 1)[1].split("';", 1)[0]
-            except Exception:
-                pass
+        title = meta
+        if "StreamTitle='" in meta:
+            title = meta.split("StreamTitle='")[1].split("';")[0]
 
-        artist = None
-        song = None
+        if " - " in title:
+            a, s = title.split(" - ", 1)
+            return normalize_artist_song(a.strip(), s.strip())[0], normalize_artist_song(a.strip(), s.strip())[1], meta
 
-        if " - " in title_part:
-            first, second = title_part.split(" - ", 1)
-            first = first.strip()
-            second = second.strip()
-            artist, song = normalize_artist_song(first, second)
-        else:
-            song = title_part.strip()
-            if not song:
-                return None, None, meta_str
-
-        return artist, song, meta_str
+        return None, title.strip(), meta
 
     except Exception as e:
         print("[ERRO ICY]", e)
         return None, None, None
 
 
-# ───────────────────────────── SHAZAM ─────────────────────────────
-
-def capturar_wav(stream_url: str, seconds: int = 4):
-    """
-    Captura alguns segundos do stream para /tmp (compatível Vercel).
-    """
-    tmpdir = tempfile.gettempdir()  # /tmp na Vercel, pasta temp no Windows
-    out_path = os.path.join(tmpdir, f"{uuid.uuid4().hex}.wav")
+# ─────────────────────────────────────────────────────────────
+# CAPTURA PARA SHAZAM
+# ─────────────────────────────────────────────────────────────
+def capturar_wav(stream_url: str, seconds=4):
+    tmp = tempfile.gettempdir()
+    out = os.path.join(tmp, f"{uuid.uuid4().hex}.wav")
 
     cmd = [
-        "ffmpeg",
-        "-y",
-        "-loglevel", "quiet",
+        "ffmpeg", "-y", "-loglevel", "quiet",
         "-user_agent", USER_AGENT,
-        "-i", stream_url,
-        "-t", str(seconds),
-        "-ac", "1",
-        "-ar", "44100",
-        out_path,
+        "-i", stream_url, "-t", str(seconds),
+        "-ac", "1", "-ar", "44100",
+        out,
     ]
 
     try:
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 2500:
-            print("✅ Captura OK:", out_path, "size:", os.path.getsize(out_path))
-            return out_path
-        print("⚠️ Ficheiro WAV inválido ou vazio")
+        if os.path.exists(out) and os.path.getsize(out) > 2500:
+            return out
     except Exception as e:
-        print("[ERRO CAPTURA FFMPEG]", e)
+        print("[ERRO CAPTURA]", e)
 
     return None
 
 
-async def identificar_shazam_async(path: str):
+async def identificar_shazam_async(path):
     try:
         shazam = Shazam()
         out = await shazam.recognize_song(path)
@@ -299,114 +264,86 @@ async def identificar_shazam_async(path: str):
         if not track:
             return None, None
         return track.get("subtitle"), track.get("title")
-    except Exception as e:
-        print("[ERRO SHAZAM]", e)
+    except:
         return None, None
 
 
-def identificar_shazam(path: str):
-    """
-    Wrapper síncrono para usar o Shazam dentro da rota Flask.
-    """
+def identificar_shazam(path):
     try:
         return asyncio.run(identificar_shazam_async(path))
     except RuntimeError:
-        # se já houver loop (mais raro na Vercel)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(identificar_shazam_async(path))
-        finally:
-            loop.close()
+        result = loop.run_until_complete(identificar_shazam_async(path))
+        loop.close()
+        return result
 
 
-# ───────────────────────────── HISTÓRICO ─────────────────────────────
-
-def add_to_history(station_id: str, artist: str, song: str):
-    """
-    Adiciona ao histórico:
-    - Ignora vazios e 'Desconhecido/Desconhecido'
-    - Não adiciona se for igual ao último registo
-    - Não adiciona se for o MESMO par mas trocado (A-B vs B-A)
-    """
+# ─────────────────────────────────────────────────────────────
+# HISTÓRICO (sem duplicações, sem A-B / B-A)
+# ─────────────────────────────────────────────────────────────
+def add_to_history(station, artist, song):
     if not artist or not song:
         return
-
-    a = artist.strip()
-    s = song.strip()
-
-    if a.lower() == "desconhecido" and s.lower() == "desconhecido":
+    if artist.lower() == "desconhecido" and song.lower() == "desconhecido":
         return
 
-    hist = HISTORY[station_id]
+    hist = HISTORY[station]
     if hist:
         last = hist[0]
-        la = last["artist"].strip()
-        ls = last["song"].strip()
+        la = last["artist"].lower()
+        ls = last["song"].lower()
 
-        # Igual exatamente?
-        if la.lower() == a.lower() and ls.lower() == s.lower():
+        # Igual
+        if la == artist.lower() and ls == song.lower():
             return
 
-        # Igual mas trocado? (ex.: "A - B" e depois "B - A")
-        if la.lower() == s.lower() and ls.lower() == a.lower():
+        # Invertido
+        if la == song.lower() and ls == artist.lower():
             return
 
     hist.appendleft({
-        "artist": a,
-        "song": s,
+        "artist": artist,
+        "song": song,
         "time": datetime.now().strftime("%H:%M:%S")
     })
 
 
-# ───────────────────────────── PROXY STREAM ─────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# PROXY STREAM – NÃO DESLIGA
+# ─────────────────────────────────────────────────────────────
 @app.route("/proxy/<station_id>")
 def proxy_stream(station_id):
-    """
-    Proxy do stream para evitar CORS no browser.
-    """
     info = fetch_station_by_id(station_id)
     if not info:
         return "Rádio não encontrada", 404
 
-    stream_url = info.get("stream")
-    if not stream_url:
+    url = info.get("stream")
+    if not url:
         return "Stream inválido", 404
 
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Icy-MetaData": "0",
-    }
-
     try:
-        r = requests.get(stream_url, headers=headers, stream=True, timeout=10)
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, stream=True, timeout=10)
         r.raise_for_status()
     except Exception as e:
-        print("❌ ERRO AO LIGAR AO STREAM:", e)
-        return "Erro ao ligar ao stream", 500
+        print("❌ STREAM ERRO:", e)
+        return "Erro no stream", 500
 
     def gerar():
-        try:
-            for chunk in r.iter_content(chunk_size=4096):
-                if chunk:
-                    yield chunk
-        except GeneratorExit:
-            pass
-        except Exception as e:
-            print("❌ ERRO NO STREAM:", e)
+        for chunk in r.iter_content(chunk_size=4096):
+            if chunk:
+                yield chunk
 
     mime = "audio/mpeg"
-    if ".aac" in stream_url:
+    if ".aac" in url:
         mime = "audio/aac"
-    if ".m3u8" in stream_url:
-        mime = "application/vnd.apple.mpegurl"
 
-    return Response(stream_with_context(gerar()), mimetype=mime, direct_passthrough=True)
+    return Response(stream_with_context(gerar()), mimetype=mime)
 
 
-# ───────────────────────────── ROTAS FLASK ─────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# ROTAS FLASK
+# ─────────────────────────────────────────────────────────────
 @app.route("/")
 def home():
     return render_template("search.html")
@@ -420,6 +357,9 @@ def radio_page(station_id):
     return render_template("index.html", radio_id=station_id, radio_name=info.get("name", "Rádio"))
 
 
+# ─────────────────────────────────────────────────────────────
+# API – SEARCH
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/search_all")
 def api_search_all():
     q = request.args.get("q", "").strip()
@@ -429,141 +369,184 @@ def api_search_all():
     try:
         url = "https://de1.api.radio-browser.info/json/stations/search"
         payload = {"name": q, "limit": 50}
+
         r = requests.post(url, json=payload, timeout=10, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
-        data = r.json()
 
+        data = r.json()
         radios = [{
             "id": st["stationuuid"],
             "name": st.get("name"),
             "country": st.get("country"),
+            "clickcount": st.get("clickcount", 0),
         } for st in data]
 
         return jsonify({"ok": True, "radios": radios})
+
     except Exception as e:
-        print("[ERRO search_all]", e)
+        print("[ERRO SEARCH]", e)
         return jsonify({"ok": False, "radios": []})
 
 
-# ───────── SUGESTÕES: TOP100, GÉNERO, PAÍS ─────────
-
+# ─────────────────────────────────────────────────────────────
+# API – TOP 100 (corrigido)
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/suggest/top100")
 def api_suggest_top100():
-    try:
-        url = "https://de1.api.radio-browser.info/json/stations/topclick/100"
-        r = requests.get(url, timeout=10, headers={"User-Agent": USER_AGENT})
-        r.raise_for_status()
-        data = r.json()
-        radios = [{
-            "id": st.get("stationuuid"),
-            "name": st.get("name"),
-            "country": st.get("country"),
-        } for st in data]
-        return jsonify({"ok": True, "radios": radios})
-    except Exception as e:
-        print("[ERRO TOP100]", e)
-        return jsonify({"ok": False, "radios": []})
+    mirrors = [
+        "https://api.radio-browser.info",
+        "https://de1.api.radio-browser.info",
+        "https://nl1.api.radio-browser.info",
+        "https://at1.api.radio-browser.info",
+        "https://uk1.api.radio-browser.info",
+    ]
+
+    for base in mirrors:
+        try:
+            url = f"{base}/json/stations/topvote/100"
+            print("🔍 A tentar:", url)
+
+            r = requests.get(
+                url,
+                timeout=10,
+                headers={"User-Agent": USER_AGENT}
+            )
+            r.raise_for_status()
+
+            data = r.json()
+            if not isinstance(data, list) or len(data) == 0:
+                print("⚠️ Mirror vazio, a tentar o próximo...")
+                continue
+
+            radios = [{
+                "id": st.get("stationuuid"),
+                "name": st.get("name"),
+                "country": st.get("country"),
+                "clickcount": st.get("clickcount", 0),
+            } for st in data]
+
+            print("✅ Carregado Top100 com sucesso!")
+            return jsonify({"ok": True, "radios": radios})
+
+        except Exception as e:
+            print(f"[ERRO MIRROR {base}]", e)
+
+    print("❌ Falha total em todos os mirrors.")
+    return jsonify({"ok": False, "radios": []})
 
 
+
+
+# ─────────────────────────────────────────────────────────────
+# API – GÉNERO
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/suggest/genre")
 def api_suggest_genre():
-    genre = (request.args.get("g") or "").strip().lower()
+    genre = (request.args.get("g") or "").strip()
     if not genre:
         return jsonify({"ok": False, "radios": []})
+
     try:
         url = "https://de1.api.radio-browser.info/json/stations/search"
         payload = {"tag": genre, "limit": 50}
+
         r = requests.post(url, json=payload, timeout=10, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
+
         data = r.json()
         radios = [{
             "id": st["stationuuid"],
             "name": st.get("name"),
             "country": st.get("country"),
+            "clickcount": st.get("clickcount", 0),
         } for st in data]
+
         return jsonify({"ok": True, "radios": radios})
+
     except Exception as e:
         print("[ERRO GENRE]", e)
         return jsonify({"ok": False, "radios": []})
 
 
+# ─────────────────────────────────────────────────────────────
+# API – PAÍS (corrigido)
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/suggest/country")
 def api_suggest_country():
     country = (request.args.get("c") or "").strip()
     if not country:
         return jsonify({"ok": False, "radios": []})
+
     try:
         url = "https://de1.api.radio-browser.info/json/stations/search"
         payload = {"country": country, "limit": 50}
+
         r = requests.post(url, json=payload, timeout=10, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
+
         data = r.json()
         radios = [{
             "id": st["stationuuid"],
             "name": st.get("name"),
             "country": st.get("country"),
+            "clickcount": st.get("clickcount", 0),
         } for st in data]
+
         return jsonify({"ok": True, "radios": radios})
+
     except Exception as e:
         print("[ERRO COUNTRY]", e)
         return jsonify({"ok": False, "radios": []})
 
 
-# ───────── NOWPLAYING + HISTÓRICO + CAPA ─────────
-
+# ─────────────────────────────────────────────────────────────
+# API – NOWPLAYING (ICY + Shazam + cooldown)
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/nowplaying")
 def api_nowplaying():
     station_id = request.args.get("station", "")
+
     info = fetch_station_by_id(station_id)
     if not info:
         return jsonify({"ok": False, "error": "Rádio inválida"})
 
-    stream_url = info.get("stream")
-    if not stream_url:
+    url = info.get("stream")
+    if not url:
         return jsonify({"ok": False, "error": "Stream inválido"})
 
-    icy_artist, icy_song, raw = get_icy_metadata(stream_url)
-    print("🎙 ICY:", icy_artist, "-", icy_song, "| raw:", raw)
+    # 1) Tenta ICY
+    icy_artist, icy_song, raw = get_icy_metadata(url)
+    print("🎙 ICY:", icy_artist, "-", icy_song)
 
     artist = icy_artist
     song = icy_song
 
-    # Se ICY for insuficiente → tentar Shazam com cooldown
+    # 2) Se ICY falhar → Shazam com cooldown
     if (
-        not artist
-        or not song
-        or artist.lower() == "desconhecido"
-        or song.lower() == "desconhecido"
+        not artist or not song or
+        artist.lower() == "desconhecido" or
+        song.lower() == "desconhecido"
     ):
         now = datetime.now()
-        use_cached = False
-
-        # Ver se temos resultado recente desta rádio
         last = SHAZAM_LAST_RESULT.get(station_id)
-        if last:
-            if now - last["time"] < timedelta(seconds=SHAZAM_COOLDOWN):
-                # Usa resultado recente do Shazam
-                artist = last["artist"]
-                song = last["song"]
-                use_cached = True
-                print("♻️ Usar Shazam em cache:", artist, "-", song)
 
-        if not use_cached:
-            print("⚠️ Metadata fraca, a capturar áudio p/ Shazam…")
-            path = capturar_wav(stream_url, seconds=4)
+        if last and now - last["time"] < timedelta(seconds=SHAZAM_COOLDOWN):
+            artist = last["artist"]
+            song = last["song"]
+            print("♻️ SHAZAM CACHE:", artist, "-", song)
+        else:
+            print("🎵 A usar Shazam…")
+            path = capturar_wav(url, 4)
             if path:
                 a2, s2 = identificar_shazam(path)
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
+                os.remove(path)
+
                 if a2 and s2:
                     artist, song = a2, s2
-                    print("🎵 SHAZAM:", artist, "-", song)
                     SHAZAM_LAST_RESULT[station_id] = {
                         "artist": artist,
                         "song": song,
-                        "time": now,
+                        "time": now
                     }
 
     artist = artist or "Desconhecido"
@@ -579,17 +562,22 @@ def api_nowplaying():
     })
 
 
+# ─────────────────────────────────────────────────────────────
+# API – HISTÓRICO
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/history")
 def api_history():
     station_id = request.args.get("station", "")
-    tracks = list(HISTORY[station_id])
-    return jsonify({"ok": True, "tracks": tracks})
+    return jsonify({"ok": True, "tracks": list(HISTORY[station_id])})
 
 
+# ─────────────────────────────────────────────────────────────
+# API – CAPAS
+# ─────────────────────────────────────────────────────────────
 @app.route("/api/cover")
 def api_cover():
-    artist = (request.args.get("artist") or "").strip()
-    song = (request.args.get("song") or "").strip()
+    artist = request.args.get("artist", "").strip()
+    song = request.args.get("song", "").strip()
 
     if artist.lower() == "desconhecido" or song.lower() == "desconhecido":
         return jsonify({"ok": True, "cover": "/static/default_cover.png"})
@@ -598,5 +586,8 @@ def api_cover():
     return jsonify({"ok": True, "cover": cover or "/static/default_cover.png"})
 
 
+# ─────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app.run(debug=True)
